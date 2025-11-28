@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# !/usr/bin/env bash
 #
 # Server Setup Essentials - Clean Slate Version
 # - Interactive menu
@@ -120,6 +120,36 @@ display_system_status() {
     echo -e "  💻 RAM: ${CYAN}$(get_ram_mb)MB${RESET} (Free: $(get_free_ram_mb)MB)"
     echo -e "  💾 Swap: ${CYAN}$(get_swap_total_mb)MB${RESET} (Used: $(get_swap_used_mb)MB)"
     echo -e "  💿 Disk Available: ${CYAN}$(get_disk_available_mb)MB${RESET}"
+    
+    # Disk type detection
+    local disk_type=$(lsblk -d -o ROTA 2>/dev/null | awk 'NR==2')
+    if [[ "$disk_type" == "0" ]]; then
+        echo -e "  🚀 Disk Type: ${CYAN}SSD${RESET}"
+    elif [[ "$disk_type" == "1" ]]; then
+        echo -e "  💾 Disk Type: ${CYAN}HDD${RESET}"
+    else
+        echo -e "  💿 Disk Type: ${CYAN}Unknown${RESET}"
+    fi
+    
+    # CPU information
+    local cpu_model=$(grep -m1 "model name" /proc/cpuinfo | cut -d: -f2 | sed 's/^[ \t]*//')
+    local cpu_cores=$(grep -c "^processor" /proc/cpuinfo)
+    echo -e "  🔧 CPU: ${CYAN}${cpu_model}${RESET}"
+    echo -e "  🎯 Cores: ${CYAN}${cpu_cores}${RESET}"
+    
+    # OS information
+    local os_name=$(source /etc/os-release && echo "$PRETTY_NAME")
+    local kernel_version=$(uname -r)
+    echo -e "  🐧 OS: ${CYAN}${os_name}${RESET}"
+    echo -e "  ⚙️  Kernel: ${CYAN}${kernel_version}${RESET}"
+    
+    # BBR information
+    local bbr_status=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
+    if [[ "$bbr_status" == "bbr" ]]; then
+        echo -e "  🚀 BBR: ${GREEN}Enabled${RESET}"
+    else
+        echo -e "  🚀 BBR: ${YELLOW}Disabled${RESET}"
+    fi
     
     local active_swap=$(get_active_swap_files)
     if [[ -n "$active_swap" ]]; then
