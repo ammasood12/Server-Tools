@@ -8,7 +8,7 @@
 # - Proxy tools menu (V2bX installer)
 # - Default Setup: auto swap + base tools + timezone (no prompts)
 #
-VERSION="v2.0.0"
+VERSION="v2.0.1"
 set -euo pipefail
 
 #######################################
@@ -181,115 +181,132 @@ disable_temp_swap() {
 }
 
 #######################################
-# Swap operations
+# Swap operations (Corrected & Safe)
 #######################################
+
 create_new_swapfile() {
   local target_mb="$1"
   local new_swap="${SWAPFILE}.new"
 
-  log_info "Creating new swapfile at ${new_swap} (${target_mb}MB)..."
+  log_info "Creating new swapfile: ${new_swap} (${target_mb}MB)"
 
-  if [[ -e "$new_swap" ]]; then
-    log_error "Temporary swapfile ${new_swap} already exists. Remove it first."
-    return 1
-  fi
+  # Avoid leftover file
+  [[ -e "$new_swap" ]] && rm -f "$new_swap"
 
+  # Create the file
   if command -v fallocate >/dev/null 2>&1; then
-    fallocate -l "${target_mb}M" "$new_swap" || return 1
+    fallocate -l "${target_mb}M" "$new_swap" || {
+      log_error "fallocate failed."
+      return 1
+    }
   else
-    dd if=/dev/zero of="$new_swap" bs=1M count="$target_mb" status=none || return 1
+    dd if=/dev/zero of="$new_swap" bs=1M count="$target_mb" status=none || {
+      log_error "dd failed."
+      return 1
+    }
   fi
 
   chmod 600 "$new_swap" || return 1
-  mkswap "$new_swap" >/dev/null || return 1
+  mkswap "$new_swap" >/dev/null || {
+    log_error "mkswap failed."
+    return 1
+  }
+
   echo "$new_swap"
 }
 
 activate_swapfile() {
-  local file="$1"
-  log_info "Activating new swap: $file"
-  swapon "$file"
+  local newswap="$1"
+
+  # Extra safety check
+  if [[ ! -f "$newswap" ]]; then
+    log_error "New swapfile missing: $newswap"
+    return 1
+  fi
+
+  log_info "Activating new swap -> $newswap"
+  if ! swapon "$newswap" 2>/dev/null; then
+    log_error "swapon failed for $newswap"
+    return 1
+  fi
+
+  return 0
 }
 
 disable_and_remove_old_swapfile() {
   local old="$1"
 
   if [[ -z "$old" ]]; then
-    log_info "No existing swapfile to disable."
+    log_info "No old swapfile to disable."
     return 0
   fi
 
-  if [[ ! -e "$old" ]]; then
-    log_warn "Existing swapfile $old not found on disk; skipping removal."
-    return 0
-  fi
-
-  log_info "Disabling old swapfile: $old"
-  swapoff "$old" 2>/dev/null || log_warn "swapoff failed for $old (may not be active)."
+  log_info "Disabling old swapfile -> $old"
+  swapoff "$old" 2>/dev/null || log_warn "swapoff failed (may not be active)."
 
   if [[ -f "$old" ]]; then
-    log_info "Removing old swapfile: $old"
-    rm -f "$old" || log_warn "Failed to remove $old."
-  else
-    log_warn "$old is not a regular file, skipping rm."
+    log_info "Removing old swapfile"
+    rm -f "$old" 2>/dev/null || log_warn "Failed to remove old swapfile."
   fi
+
+  return 0
 }
 
 finalize_new_swapfile() {
-  local new="$1"
+  local newswap="$1"
 
-  log_info "Renaming $new to $SWAPFILE"
-  mv "$new" "$SWAPFILE"
+  log_info "Finalizing new swapfile"
+  mv "$newswap" "$SWAPFILE"
 
-  log_info "Updating /etc/fstab entry for $SWAPFILE"
+  log_info "Updating /etc/fstab"
   sed -i '/swapfile/d' /etc/fstab || true
   echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab
 
-  log_ok "Swap configuration persisted in /etc/fstab."
+  return 0
 }
 
 apply_swap_change() {
   local target_mb="$1"
-
   local current_swap_mb
   current_swap_mb=$(get_swap_total_mb)
 
-  if [[ "$target_mb" -eq "$current_swap_mb" ]]; then
-    log_info "Current swap (${current_swap_mb}MB) already matches target. Nothing to do."
+  [[ "$target_mb" -eq "$current_swap_mb" ]] && {
+    log_info "Swap already ${current_swap_mb}MB → No change"
     return 0
-  fi
+  }
 
   section_title "Swap Change Plan"
   echo -e "  Current swap : ${CYAN}${current_swap_mb}MB${RESET}"
   echo -e "  Target swap  : ${CYAN}${target_mb}MB${RESET}"
   echo
 
-  # For manual menu, ask. For default_setup, we call this directly and skip input.
-  if [[ "${1:-}" != "AUTO_NO_PROMPT" ]]; then
+  # IF NOT default auto mode → ask
+  if [[ "${2:-}" != "AUTO" ]]; then
     read -rp "Apply this swap change? (y/N): " ans
-    case "$ans" in
-      y|Y) ;;
-      *) log_warn "Swap change cancelled."; return 0 ;;
-    esac
-  fi
-
-  if ! memory_safety_check; then
-    log_warn "Memory too full to safely adjust swap directly."
-    if enable_temp_swap; then
-      log_ok "Temporary safety swap enabled. Continuing..."
-    else
-      log_error "Could not enable temporary safety swap. Skipping swap change."
+    [[ "$ans" != "y" && "$ans" != "Y" ]] && {
+      log_warn "Swap change cancelled."
       return 0
-    fi
+    }
   fi
 
-  local new_swapfile old_swapfile
+  # Safety check
+  if ! memory_safety_check; then
+    log_warn "Memory low → enabling temporary safety swap..."
+    enable_temp_swap || {
+      log_error "Failed to enable temporary swap → aborting"
+      return 0
+    }
+  fi
+
+  # Create new swapfile
+  local new_swapfile
   new_swapfile=$(create_new_swapfile "$target_mb") || {
-    log_error "Failed to create new swapfile."
+    log_error "Could not create new swapfile."
     disable_temp_swap
     return 0
   }
 
+  # Activate new swapfile
   activate_swapfile "$new_swapfile" || {
     log_error "Failed to activate new swap."
     rm -f "$new_swapfile" || true
@@ -297,22 +314,26 @@ apply_swap_change() {
     return 0
   }
 
+  # Find old swapfile (excluding new + temp)
+  local old_swapfile=""
   mapfile -t existing_files < <(get_existing_swap_files)
-  old_swapfile=""
-  if [[ "${#existing_files[@]}" -gt 0 ]]; then
-    for f in "${existing_files[@]}"; do
-      if [[ "$f" != "$new_swapfile" && "$f" != "$TEMP_SWAP_PATH" ]]; then
-        old_swapfile="$f"
-        break
-      fi
-    done
-  fi
+  for f in "${existing_files[@]}"; do
+    if [[ "$f" != "$new_swapfile" && "$f" != "$TEMP_SWAP_PATH" ]]; then
+      old_swapfile="$f"
+      break
+    fi
+  done
 
+  # Disable & remove old swapfile
   disable_and_remove_old_swapfile "$old_swapfile"
+
+  # Finalize new swap
   finalize_new_swapfile "$new_swapfile"
+
+  # Remove temporary safety swap if active
   disable_temp_swap
 
-  log_ok "Swap updated successfully."
+  log_ok "Swap update complete."
   echo
   free -h
   echo
