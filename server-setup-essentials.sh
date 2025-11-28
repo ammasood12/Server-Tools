@@ -8,7 +8,7 @@
 # - Proxy tools menu (V2bX installer)
 # - Default Setup: auto swap + base tools + timezone (no prompts)
 #
-VERSION="v2.0.1"
+VERSION="v2.0.2"
 set -euo pipefail
 
 #######################################
@@ -190,30 +190,36 @@ create_new_swapfile() {
 
   log_info "Creating new swapfile: ${new_swap} (${target_mb}MB)"
 
-  # Avoid leftover file
-  [[ -e "$new_swap" ]] && rm -f "$new_swap"
+  # REMOVE any previous file
+  rm -f "$new_swap" 2>/dev/null || true
 
-  # Create the file
+  # Create file
   if command -v fallocate >/dev/null 2>&1; then
-    fallocate -l "${target_mb}M" "$new_swap" || {
-      log_error "fallocate failed."
+    if ! fallocate -l "${target_mb}M" "$new_swap"; then
+      log_error "Failed to allocate swapfile."
       return 1
-    }
+    fi
   else
-    dd if=/dev/zero of="$new_swap" bs=1M count="$target_mb" status=none || {
-      log_error "dd failed."
+    if ! dd if=/dev/zero of="$new_swap" bs=1M count="$target_mb" status=none; then
+      log_error "Failed to create swapfile with dd."
       return 1
-    }
+    fi
   fi
 
   chmod 600 "$new_swap" || return 1
-  mkswap "$new_swap" >/dev/null || {
+
+  if ! mkswap "$new_swap" >/dev/null 2>&1; then
     log_error "mkswap failed."
     return 1
-  }
+  fi
 
+  ###
+  # IMPORTANT:
+  # ONLY echo the filename. No logs. No extra text.
+  ###
   echo "$new_swap"
 }
+
 
 activate_swapfile() {
   local newswap="$1"
@@ -300,11 +306,12 @@ apply_swap_change() {
 
   # Create new swapfile
   local new_swapfile
-  new_swapfile=$(create_new_swapfile "$target_mb") || {
-    log_error "Could not create new swapfile."
-    disable_temp_swap
-    return 0
-  }
+	new_swapfile="$(create_new_swapfile "$target_mb")"
+	if [[ -z "$new_swapfile" || ! -f "$new_swapfile" ]]; then
+		log_error "Swapfile creation failed."
+		disable_temp_swap
+		return 0
+	fi
 
   # Activate new swapfile
   activate_swapfile "$new_swapfile" || {
