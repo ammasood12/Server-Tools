@@ -8,7 +8,7 @@
 # - Software installation (multi-select)
 # - Comprehensive network optimization
 
-VERSION="v2.3.5"
+VERSION="v2.3.6"
 set -euo pipefail
 
 ###### Colors and Styles ######
@@ -202,6 +202,7 @@ get_swap_status() {
 
 ###### Display System Status ######
 ###############################################
+
 display_system_status() {
     # Header information
     printf "${MAGENTA}%-14s${RESET} %-17s ${MAGENTA}%-10s${RESET} %-20s\n" \
@@ -307,18 +308,18 @@ display_resource_usage() {
     local LOAD=$(uptime | awk -F'load average:' '{print $2}' | xargs)
     local load1=$(echo "$LOAD" | awk -F', ' '{print $1}' | sed 's/,//g')
     local CORES=$(nproc)
-    
+    	
+    # Disk
+    local disk_color=$(get_disk_status "$DISK_PERCENT")
+    printf "${YELLOW}%-14s${RESET} ${disk_color}%-20s${RESET} %s\n" "  Disk:" \
+        "${DISK_USED} / ${DISK_TOTAL} (${DISK_PERCENT})" "$(get_disk_type)"
+		
     # Load Average
     printf "${YELLOW}%-14s${RESET} %-20s %s\n" "  Load Avg:" "$LOAD" "$(get_load_status "$load1" "$CORES")"
     
     # Memory
     printf "${YELLOW}%-14s${RESET} %-20s %s\n" "  Memory:" "${MEM_USED}MB / ${MEM_TOTAL}MB (${MEM_PERCENT}%)" \
-        "$(get_mem_status "$MEM_PERCENT" "$(get_free_ram_mb)")"
-    
-    # Disk
-    local disk_color=$(get_disk_status "$DISK_PERCENT")
-    printf "${YELLOW}%-14s${RESET} ${disk_color}%-20s${RESET} %s\n" "  Disk:" \
-        "${DISK_USED} / ${DISK_TOTAL} (${DISK_PERCENT})" "$(get_disk_type)"
+        "$(get_mem_status "$MEM_PERCENT" "$(get_free_ram_mb)")"    
     
     # Swap
     local swap_total=$(get_swap_total_mb)
@@ -344,12 +345,12 @@ display_network_info() {
     local bbr_status=$(sysctl net.ipv4.tcp_congestion_control 2>/dev/null | awk '{print $3}')
     local q_status=$(sysctl net.core.default_qdisc 2>/dev/null | awk '{print $3}')
     
-    local ipv6_status=$([ -n "$IPV6" ] && echo -e "${GREEN}Available${RESET}" || echo -e "${RED}Disabled${RESET}")
+    local ipv6_status=$([ -n "$IPV6" ] && echo -e "${GREEN}IPv6 ✓${RESET}" || echo -e "${RED}IPv6 ✗${RESET}")
     local bbr_display=$([ "$bbr_status" == "bbr" ] || [ "$bbr_status" == "bbr2" ] && echo -e "${GREEN}${bbr_status^^} ✓${RESET}" || echo -e "${RED}${bbr_status} ✗${RESET}")
     local qdisc_display=$([ "$q_status" == "fq_codel" ] && echo -e "${GREEN}${q_status^^} ✓${RESET}" || echo -e "${RED}${q_status} ✗${RESET}")
-    
-    printf "${YELLOW}%-14s${RESET} %-20s ${YELLOW}%-10s${RESET} %s\n" "  IPv4:" "$IPV4" "IPv6:" "$ipv6_status"
-    printf "${YELLOW}%-14s${RESET} %-20s ${YELLOW}%-14s${RESET} %s\n" "  BBR:" "$bbr_display" "QDisc:" "$qdisc_display"
+        
+    printf "${YELLOW}%-14s${RESET} %-20s ${YELLOW}%-14s${RESET} %s\n" "  BBR+QDisc:" "$bbr_display + $qdisc_display"
+	printf "${YELLOW}%-14s${RESET} %-20s ${YELLOW}%-10s${RESET} %s\n" "  IPv4:" "$IPV4 ($ipv6_status)"
 }
 
 ###### Swap Management Core ######
@@ -615,16 +616,17 @@ network_system_info() {
 network_tools_menu() {
     while true; do        
         section_title "Network Tools & Optimization"
-        echo -e "${BOLD}${CYAN}Available Network Actions:${RESET}"
-        echo "1) Run Network Diagnostics"
-        echo "2) Apply Network Optimization (BBR/BBR2)"
-        echo "3) Restore Network Settings"
-        echo "4) Install Network Tools"
-        echo "5) Show detailed system & network info"
-        echo "0) Back to Main Menu"
+        # echo -e "${BOLD}${CYAN}Available Network Actions:${RESET}"
+		echo
+        echo "   1) Run Network Diagnostics"
+        echo "   2) Apply Network Optimization (BBR/BBR2)"
+        echo "   3) Restore Network Settings"
+        echo "   4) Install Network Tools"
+        echo "   5) Show detailed system & network info"
+        echo "   0) Back to Main Menu"
         echo
         
-        read -rp "Choose option [1-6]: " choice
+        read -rp "   Choose option [1-6]: " choice
         case $choice in
             1) network_diagnostics; pause ;;
             2) apply_network_optimization; pause ;;
@@ -637,7 +639,7 @@ network_tools_menu() {
     done
 }
 
-###### Advanced System Logs Optimization ######
+###### Optimize System Logs ######
 ###############################################
 
 optimize_system_logs() {
@@ -808,20 +810,12 @@ EOF
     
     # Set up cron job for regular cleanup
     sub_section "Step 5: Setting Up Automatic Cleanup"
-    log_info "Configuring automatic log cleanup cron job..."
-    
-    local cron_job="0 2 * * * /usr/bin/journalctl --vacuum-size=100M --vacuum-time=7days >/dev/null 2>&1"
-    
-    # Remove existing similar cron jobs
-    (crontab -l 2>/dev/null | grep -v "journalctl --vacuum" | crontab -) 2>/dev/null
-    
-    # Add new cron job
-    (crontab -l 2>/dev/null; echo "$cron_job") | crontab - 2>/dev/null
-    
-    if crontab -l 2>/dev/null | grep -q "journalctl --vacuum"; then
-        log_ok "Automatic log cleanup cron job configured"
+    if setup_log_cleanup_cron; then
+        log_ok "Automatic log cleanup scheduling completed"
     else
-        log_warn "Failed to configure cron job"
+        log_warn "Cron job setup failed - please configure manually"
+        echo -e "${YELLOW}Manual command to add to crontab (crontab -e):${RESET}"
+        echo -e "${CYAN}0 2 * * * /usr/bin/journalctl --vacuum-size=100M --vacuum-time=7days >/dev/null 2>&1${RESET}"
     fi
     
     # Optimize specific service logs if they exist
@@ -864,16 +858,17 @@ advanced_logs_optimization() {
     while true; do
         section_title "Advanced System Logs Optimization"
         
-        echo -e "${BOLD}${CYAN}Log Optimization Categories:${RESET}"
-        echo "1) 📊 Journal Configuration & Limits"
-        echo "2) 🗑️  Immediate Log Cleanup"
-        echo "3) ⏰ Automated Cleanup Scheduling"
-        echo "4) 📋 System Status & Information"
-        echo "5) 🔄 Reset & Removal"
-        echo "0) ↩️  Back to Main Menu"
+        # echo -e "${BOLD}${CYAN}Log Optimization Categories:${RESET}"
+		echo
+        echo "   1) Journal Configuration & Limits"
+        echo "   2) Immediate Log Cleanup"
+        echo "   3) Automated Cleanup Scheduling"
+        echo "   4) System Status & Information"
+        echo "   5) Reset & Removal"
+        echo "   0) ↩️  Back to Main Menu"
         echo
         
-        read -rp "Choose category [1-6]: " category_choice
+        read -rp "   Choose category [1-6]: " category_choice
         
         case $category_choice in
             1)	journal_configuration_menu ;;
@@ -892,16 +887,16 @@ advanced_logs_optimization() {
 #######################################
 journal_configuration_menu() {
     while true; do
-        section_title "Journal Configuration & Limits"
-        
-        echo -e "${BOLD}${CYAN}Journal Configuration Options:${RESET}"
-        echo "1) Apply Basic Journal Optimization (Recommended)"
-        echo "2) Set Custom Journal Limits"
-        echo "3) View Current Journal Settings"
-        echo "0) Back to Log Optimization Menu"
+        section_title "Logs Optimization > Journal Configuration & Limits"        
+        # echo -e "${BOLD}${CYAN}Journal Configuration Options:${RESET}"
+		echo
+        echo "   1) Apply Basic Journal Optimization (Recommended)"
+        echo "   2) Set Custom Journal Limits"
+        echo "   3) View Current Journal Settings"
+        echo "   0) Back to Log Optimization Menu"
         echo
         
-        read -rp "Choose option [1-4]: " choice
+        read -rp "   Choose option [1-4]: " choice
         
         case $choice in
             1)  optimize_system_logs ;;
@@ -919,18 +914,18 @@ journal_configuration_menu() {
 #######################################
 immediate_cleanup_menu() {
     while true; do
-        section_title "Immediate Log Cleanup"
-        
-        echo -e "${BOLD}${CYAN}Immediate Cleanup Options:${RESET}"
-        echo "1) Vacuum to 50M Size Limit"
-        echo "2) Vacuum Logs Older Than 7 Days"
-        echo "3) Vacuum Both Size and Time"
-        echo "4) Custom Vacuum Parameters"
-        echo "5) View Current Log Usage"
-        echo "0) Back to Log Optimization Menu"
+        section_title "Logs Optimization > Immediate Log Cleanup"        
+        # echo -e "${BOLD}${CYAN}Immediate Cleanup Options:${RESET}"
+		echo
+        echo "   1) Vacuum to 50M Size Limit"
+        echo "   2) Vacuum Logs Older Than 7 Days"
+        echo "   3) Vacuum Both Size and Time"
+        echo "   4) Custom Vacuum Parameters"
+        echo "   5) View Current Log Usage"
+        echo "   0) Back to Log Optimization Menu"
         echo
         
-        read -rp "Choose option [1-6]: " choice
+        read -rp "   Choose option [1-6]: " choice
         
         case $choice in
             1)  vacuum_logs_only ;;
@@ -952,18 +947,18 @@ immediate_cleanup_menu() {
 #######################################
 automated_scheduling_menu() {
     while true; do
-        section_title "Automated Cleanup Scheduling"
-        
+        # section_title "Logs Optimization > Automated Cleanup Scheduling"
+        echo
         echo -e "${BOLD}${CYAN}Cron Job Management Options:${RESET}"
-        echo "1) Add/Update Default Log Cleanup Cron Job"
-        echo "2) Add Custom Log Cleanup Cron Job"
-        echo "3) View Current Cron Jobs"
-        echo "4) Test Cron Job Execution"
-        echo "5) Remove All Log Cleanup Cron Jobs"
-        echo "0) Back to Log Optimization Menu"
+        echo "   1) Add/Update Default Log Cleanup Cron Job"
+        echo "   2) Add Custom Log Cleanup Cron Job"
+        echo "   3) View Current Cron Jobs"
+        echo "   4) Test Cron Job Execution"
+        echo "   5) Remove All Log Cleanup Cron Jobs"
+        echo "   0) Back to Log Optimization Menu"
         echo
         
-        read -rp "Choose option [1-6]: " choice
+        read -rp "   Choose option [1-6]: " choice
         
         case $choice in
             1)  add_default_log_cron ;;
@@ -981,7 +976,7 @@ automated_scheduling_menu() {
 ###### System Status Sub-Menu ######
 #######################################
 system_status_menu() {
-    section_title "System Status & Information"
+    section_title "Logs Optimization > System Status & Information"
     
     echo -e "${GREEN}Journal Disk Usage:${RESET}"
     journalctl --disk-usage
@@ -1005,17 +1000,17 @@ system_status_menu() {
 #######################################
 reset_removal_menu() {
     while true; do
-        section_title "Reset & Removal Options"
-        
-        echo -e "${BOLD}${CYAN}Reset & Removal Options:${RESET}"
-        echo "1) Remove All Log Optimization Settings"
-        echo "2) Remove Only Cron Jobs (Keep Journal Settings)"
-        echo "3) Reset Journal to Default Settings"
-        echo "4) View What Will Be Removed"
-        echo "0) Back to Log Optimization Menu"
+        section_title "Logs Optimization > Reset & Removal Options"        
+        # echo -e "${BOLD}${CYAN}Reset & Removal Options:${RESET}"
+		echo	
+        echo "   1) Remove All Log Optimization Settings"
+        echo "   2) Remove Only Cron Jobs (Keep Journal Settings)"
+        echo "   3) Reset Journal to Default Settings"
+        echo "   4) View What Will Be Removed"
+        echo "   0) Back to Log Optimization Menu"
         echo
         
-        read -rp "Choose option [1-5]: " choice
+        read -rp "   Choose option [1-5]: " choice
         
         case $choice in
             1)	remove_log_optimization ;;
@@ -1313,48 +1308,112 @@ remove_log_optimization() {
     log_ok "Journald service restarted with default settings"
 }
 
-###### Log Cleanup Cron Job Management ######
-#######################################
 
-manage_log_cleanup_cron() {
-    section_title "Log Cleanup Cron Job Management"
+###### Complete Fixed Cron Job Management ######
+###############################################
+
+# Safe crontab management
+safe_crontab() {
+    local action="$1"
+    local content="$2"
     
-    echo -e "${BOLD}${CYAN}Current Log Cleanup Cron Jobs:${RESET}"
-    show_current_cron_jobs
-    
-    echo -e "${BOLD}${GREEN}Available Actions:${RESET}"
-    echo "1) Add/Update Default Log Cleanup Cron Job"
-    echo "2) Add Custom Log Cleanup Cron Job"
-    echo "3) Remove All Log Cleanup Cron Jobs"
-    echo "4) View Current Cron Jobs"
-    echo "5) Test Cron Job Execution"
-    echo "0) Back to Main Menu"
-    echo
-    
-    read -rp "Choose option [1-6]: " cron_choice
-    
-    case $cron_choice in
-        1)  add_default_log_cron
+    case "$action" in
+        "get")
+            crontab -l 2>/dev/null || echo ""
             ;;
-        2)  add_custom_log_cron
+        "set")
+            echo "$content" | crontab - 2>/dev/null
+            return $?
             ;;
-        3)  remove_log_cron_jobs
-            ;;
-        4)  show_current_cron_jobs detailed
-            ;;
-        5)  test_cron_execution
-            ;;
-        0)  return
-            ;;
-        *)  log_warn "Invalid choice"
+        "add")
+            local current=$(crontab -l 2>/dev/null || echo "")
+            printf "%s\n%s" "$current" "$content" | crontab - 2>/dev/null
+            return $?
             ;;
     esac
-    pause
 }
 
+# Add cron job with duplicate prevention
+add_cron_job() {
+    local new_job="$1"
+    local description="$2"
+    
+    log_info "Adding cron job: $description"
+    
+    # Check if job already exists
+    if safe_crontab "get" | grep -F "$new_job" >/dev/null; then
+        log_ok "Cron job already exists"
+        return 0
+    fi
+    
+    # Add the new job
+    if safe_crontab "add" "$new_job"; then
+        # Verify it was added
+        if safe_crontab "get" | grep -F "$new_job" >/dev/null; then
+            log_ok "Cron job added successfully: $description"
+            return 0
+        else
+            log_error "Failed to verify cron job addition"
+            return 1
+        fi
+    else
+        log_error "Failed to add cron job"
+        return 1
+    fi
+}
+
+# Remove cron jobs by pattern
+remove_cron_jobs() {
+    local pattern="$1"
+    local description="$2"
+    
+    log_info "Removing cron jobs: $description"
+    
+    local current_crontab=$(safe_crontab "get")
+    local new_crontab=$(echo "$current_crontab" | grep -v "$pattern" || true)
+    
+    if [[ "$current_crontab" != "$new_crontab" ]]; then
+        if safe_crontab "set" "$new_crontab"; then
+            log_ok "Cron jobs removed successfully: $description"
+            return 0
+        else
+            log_error "Failed to remove cron jobs"
+            return 1
+        fi
+    else
+        log_ok "No matching cron jobs found to remove"
+        return 0
+    fi
+}
+
+# Test if cron system is working
+test_cron_system() {
+    log_info "Testing cron system..."
+    
+    # Test basic cron functionality
+    if ! command -v crontab >/dev/null 2>&1; then
+        log_error "crontab command not found. Install cron package first."
+        return 1
+    fi
+    
+    # Test if we can read/write crontab
+    local test_job="# TEST $(date +%s)"
+    if safe_crontab "add" "$test_job" 2>/dev/null; then
+        # Clean up test job
+        remove_cron_jobs "$test_job" "test job"
+        log_ok "Cron system is working properly"
+        return 0
+    else
+        log_error "Cron system is not accessible. Check permissions."
+        return 1
+    fi
+}
+
+# Show current cron jobs - FIXED VERSION
 show_current_cron_jobs() {
-    local detail_level="$1"
-    local cron_jobs=$(crontab -l 2>/dev/null | grep -E "journal|vacuum|log")
+    local detail_level="${1:-simple}"  # Default to simple if no parameter
+    
+    local cron_jobs=$(safe_crontab "get" | grep -E "journal|vacuum|log")
     
     if [[ -z "$cron_jobs" ]]; then
         echo -e "  ${YELLOW}No log cleanup cron jobs configured${RESET}"
@@ -1364,7 +1423,7 @@ show_current_cron_jobs() {
     if [[ "$detail_level" == "detailed" ]]; then
         echo -e "${GREEN}Detailed Cron Job Information:${RESET}"
         echo -e "${CYAN}╔════════════════════════════════════════════════════════════════╗${RESET}"
-        crontab -l 2>/dev/null | grep -E "journal|vacuum|log" | while IFS= read -r job; do
+        safe_crontab "get" | grep -E "journal|vacuum|log" | while IFS= read -r job; do
             printf "${CYAN}║${RESET} ${YELLOW}%-60s${RESET} ${CYAN}║${RESET}\n" "  $job"
         done
         echo -e "${CYAN}╚════════════════════════════════════════════════════════════════╝${RESET}"
@@ -1377,6 +1436,35 @@ show_current_cron_jobs() {
     echo
 }
 
+# Setup log cleanup cron
+setup_log_cleanup_cron() {
+    sub_section "Setting Up Automatic Log Cleanup"
+    
+    # Test cron system first
+    if ! test_cron_system; then
+        log_warn "Please install cron package: apt update && apt install -y cron"
+        return 1
+    fi
+    
+    local cron_job="0 2 * * * /usr/bin/journalctl --vacuum-size=100M --vacuum-time=7days >/dev/null 2>&1"
+    local description="Daily log cleanup at 2 AM"
+    
+    # Remove any existing log cleanup jobs first
+    remove_cron_jobs "journalctl --vacuum" "existing log cleanup jobs"
+    
+    # Add the new job
+    if add_cron_job "$cron_job" "$description"; then
+        echo -e "${GREEN}✓ Schedule:${RESET} Daily at 2:00 AM"
+        echo -e "${GREEN}✓ Action:${RESET} Vacuum logs to 100MB, keep 7 days"
+        echo -e "${GREEN}✓ Command:${RESET} journalctl --vacuum-size=100M --vacuum-time=7days"
+        return 0
+    else
+        log_error "Failed to setup log cleanup cron job"
+        return 1
+    fi
+}
+
+# Default log cron
 add_default_log_cron() {
     section_title "Add Default Log Cleanup Cron Job"
     
@@ -1390,23 +1478,14 @@ add_default_log_cron() {
         return
     }
     
-    local cron_job="0 2 * * * /usr/bin/journalctl --vacuum-size=100M --vacuum-time=7days >/dev/null 2>&1"
-    
-    # Remove existing similar cron jobs
-    remove_log_cron_jobs silent
-    
-    # Add new cron job
-    (crontab -l 2>/dev/null; echo "$cron_job") | crontab - 2>/dev/null
-    
-    if crontab -l 2>/dev/null | grep -q "journalctl --vacuum-size=100M --vacuum-time=7days"; then
-        log_ok "Default log cleanup cron job added successfully"
-        echo -e "${GREEN}Schedule:${RESET} Daily at 2:00 AM"
-        echo -e "${GREEN}Action:${RESET} Vacuum logs to 100MB, keep 7 days"
+    if setup_log_cleanup_cron; then
+        log_ok "Default log cleanup cron job configured successfully"
     else
-        log_error "Failed to add cron job"
+        log_error "Failed to configure default cron job"
     fi
 }
 
+# Custom log cron
 add_custom_log_cron() {
     section_title "Add Custom Log Cleanup Cron Job"
     
@@ -1427,7 +1506,8 @@ add_custom_log_cron() {
     local cron_schedule=""
     case $schedule_choice in
         1) cron_schedule="0 2 * * *" ;;
-        2)  read -rp "Enter hour (0-23): " custom_hour
+        2)  
+            read -rp "Enter hour (0-23): " custom_hour
             [[ $custom_hour =~ ^[0-9]+$ ]] && [[ $custom_hour -ge 0 ]] && [[ $custom_hour -le 23 ]] || {
                 log_error "Invalid hour, using default 2 AM"
                 custom_hour="2"
@@ -1436,7 +1516,8 @@ add_custom_log_cron() {
             ;;
         3) cron_schedule="0 2 * * 0" ;;
         4) cron_schedule="0 2 1 * *" ;;
-        5)  echo -e "${YELLOW}Enter custom cron schedule (min hour day month weekday):${RESET}"
+        5)  
+            echo -e "${YELLOW}Enter custom cron schedule (min hour day month weekday):${RESET}"
             echo -e "${CYAN}Examples:${RESET}"
             echo "  '0 2 * * *'    - Daily at 2:00 AM"
             echo "  '0 0 * * 0'    - Weekly on Sunday"
@@ -1445,7 +1526,8 @@ add_custom_log_cron() {
             echo
             read -rp "Cron schedule: " cron_schedule
             ;;
-        *)  log_warn "Invalid choice, using default schedule"
+        *)  
+            log_warn "Invalid choice, using default schedule"
             cron_schedule="0 2 * * *"
             ;;
     esac
@@ -1459,25 +1541,8 @@ add_custom_log_cron() {
     vacuum_size=${vacuum_size:-"100M"}
     vacuum_time=${vacuum_time:-"7days"}
     
-    # Additional options
-    echo
-    echo -e "${CYAN}Additional Options:${RESET}"
-    read -rp "Rotate system logs as well? (y/N): " rotate_system_logs
-    read -rp "Enable verbose output? (y/N): " verbose_output
-    
     # Build cron command
-    local cron_command="/usr/bin/journalctl --vacuum-size=$vacuum_size --vacuum-time=$vacuum_time"
-    
-    if [[ $rotate_system_logs =~ ^[Yy]$ ]]; then
-        cron_command="$cron_command && /usr/sbin/logrotate -f /etc/logrotate.conf"
-    fi
-    
-    if [[ $verbose_output =~ ^[Yy]$ ]]; then
-        cron_command="$cron_command"
-    else
-        cron_command="$cron_command >/dev/null 2>&1"
-    fi
-    
+    local cron_command="/usr/bin/journalctl --vacuum-size=$vacuum_size --vacuum-time=$vacuum_time >/dev/null 2>&1"
     local full_cron_job="$cron_schedule $cron_command"
     
     # Show summary and confirm
@@ -1487,8 +1552,6 @@ add_custom_log_cron() {
     printf "${CYAN}║${RESET} ${YELLOW}%-15s${RESET} ${GREEN}%s${RESET} %30s ${CYAN}║${RESET}\n" "Schedule:" "$cron_schedule" ""
     printf "${CYAN}║${RESET} ${YELLOW}%-15s${RESET} ${GREEN}%s${RESET} %30s ${CYAN}║${RESET}\n" "Size limit:" "$vacuum_size" ""
     printf "${CYAN}║${RESET} ${YELLOW}%-15s${RESET} ${GREEN}%s${RESET} %30s ${CYAN}║${RESET}\n" "Time limit:" "$vacuum_time" ""
-    printf "${CYAN}║${RESET} ${YELLOW}%-15s${RESET} ${GREEN}%s${RESET} %30s ${CYAN}║${RESET}\n" "System logs:" "$([[ $rotate_system_logs =~ ^[Yy]$ ]] && echo "Yes" || echo "No")" ""
-    printf "${CYAN}║${RESET} ${YELLOW}%-15s${RESET} ${GREEN}%s${RESET} %30s ${CYAN}║${RESET}\n" "Verbose:" "$([[ $verbose_output =~ ^[Yy]$ ]] && echo "Yes" || echo "No")" ""
     echo -e "${CYAN}╠════════════════════════════════════════════════════════════════╣${RESET}"
     printf "${CYAN}║${RESET} ${MAGENTA}%-60s${RESET} ${CYAN}║${RESET}\n" "Command: $cron_command"
     echo -e "${CYAN}╚════════════════════════════════════════════════════════════════╝${RESET}"
@@ -1501,47 +1564,41 @@ add_custom_log_cron() {
     }
     
     # Remove existing similar cron jobs
-    remove_log_cron_jobs silent
+    remove_cron_jobs "journalctl --vacuum" "existing log cleanup jobs"
     
     # Add new cron job
-    (crontab -l 2>/dev/null; echo "$full_cron_job") | crontab - 2>/dev/null
-    
-    if crontab -l 2>/dev/null | grep -q "$cron_command"; then
+    if add_cron_job "$full_cron_job" "custom log cleanup"; then
         log_ok "Custom log cleanup cron job added successfully"
     else
         log_error "Failed to add custom cron job"
     fi
 }
 
-remove_log_cron_jobs() {
-    local silent="$1"
+# Remove all log cron jobs
+remove_all_log_cron_jobs() {
+    section_title "Remove All Log Cleanup Cron Jobs"
     
-    [[ -z "$silent" ]] && {
-        read -rp "Remove all log cleanup cron jobs? (y/N): " confirm
-        [[ $confirm =~ ^[Yy]$ ]] || {
-            log_warn "Operation cancelled"
-            return
-        }
+    read -rp "Remove all log cleanup cron jobs? (y/N): " confirm
+    [[ $confirm =~ ^[Yy]$ ]] || {
+        log_warn "Operation cancelled"
+        return
     }
     
-    local current_crontab=$(crontab -l 2>/dev/null)
-    local new_crontab=$(echo "$current_crontab" | grep -v -E "journal|vacuum|log")
-    
-    if [[ "$current_crontab" != "$new_crontab" ]]; then
-        echo "$new_crontab" | crontab - 2>/dev/null
-        [[ -z "$silent" ]] && log_ok "All log cleanup cron jobs removed"
+    if remove_cron_jobs "journal|vacuum|log" "all log cleanup jobs"; then
+        log_ok "All log cleanup cron jobs removed successfully"
     else
-        [[ -z "$silent" ]] && log_ok "No log cleanup cron jobs found to remove"
+        log_error "Failed to remove cron jobs"
     fi
 }
 
+# Test cron execution
 test_cron_execution() {
     section_title "Test Cron Job Execution"
     
     echo -e "${YELLOW}This will execute the log cleanup command now to test it:${RESET}"
     echo
     
-    local cron_jobs=$(crontab -l 2>/dev/null | grep -E "journal|vacuum|log" | head -1)
+    local cron_jobs=$(safe_crontab "get" | grep -E "journal|vacuum|log" | head -1)
     
     if [[ -z "$cron_jobs" ]]; then
         log_error "No log cleanup cron jobs found to test"
@@ -1563,31 +1620,62 @@ test_cron_execution() {
     }
     
     echo -e "\n${CYAN}Executing test command...${RESET}"
-    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════╗${RESET}"
     
     # Show before state
     local before_usage=$(journalctl --disk-usage 2>/dev/null | grep -o '[0-9.]\+[A-Z]' | head -1)
-    printf "${CYAN}║${RESET} ${YELLOW}%-20s${RESET} ${GREEN}%8s${RESET} %30s ${CYAN}║${RESET}\n" "Before:" "$before_usage" ""
+    echo -e "${GREEN}Before:${RESET} $before_usage"
     
     # Execute the command
     if eval "$test_command" 2>/dev/null; then
         # Show after state
         local after_usage=$(journalctl --disk-usage 2>/dev/null | grep -o '[0-9.]\+[A-Z]' | head -1)
-        printf "${CYAN}║${RESET} ${YELLOW}%-20s${RESET} ${GREEN}%8s${RESET} %30s ${CYAN}║${RESET}\n" "After:" "$after_usage" ""
+        echo -e "${GREEN}After:${RESET} $after_usage"
         
-        # Calculate savings
         if [[ "$before_usage" != "$after_usage" ]]; then
             local saved=$(calculate_savings "$before_usage" "$after_usage")
-            printf "${CYAN}║${RESET} ${YELLOW}%-20s${RESET} ${GREEN}%8s${RESET} %30s ${CYAN}║${RESET}\n" "Space saved:" "$saved" ""
+            echo -e "${GREEN}Space saved:${RESET} $saved"
         fi
         
-        echo -e "${CYAN}╚════════════════════════════════════════════════════════════════╝${RESET}"
         log_ok "Cron job test executed successfully"
     else
-        echo -e "${CYAN}║${RESET} ${RED}Command execution failed${RESET} %30s ${CYAN}║${RESET}"
-        echo -e "${CYAN}╚════════════════════════════════════════════════════════════════╝${RESET}"
         log_error "Cron job test failed"
     fi
+}
+
+###### Updated Automated Scheduling Sub-Menu ######
+###################################################
+
+automated_scheduling_menu() {
+    while true; do
+        section_title "Automated Cleanup Scheduling"        
+        # echo -e "${BOLD}${CYAN}Cron Job Management Options:${RESET}"
+		echo
+        echo "   1) Add/Update Default Log Cleanup Cron Job"
+        echo "   2) Add Custom Log Cleanup Cron Job"
+        echo "   3) View Current Cron Jobs"
+        echo "   4) Test Cron Job Execution"
+        echo "   5) Remove All Log Cleanup Cron Jobs"
+        echo "   0) Back to Log Optimization Menu"
+        echo
+        
+        read -rp "   Choose option [1-6]: " choice
+        
+        case $choice in
+            1)  add_default_log_cron 
+                pause ;;
+            2)  add_custom_log_cron 
+                pause ;;
+            3)  show_current_cron_jobs "detailed"
+                pause ;;
+            4)  test_cron_execution 
+                pause ;;
+            5)  remove_all_log_cron_jobs 
+                pause ;;
+            0)  return ;;
+            *)  log_warn "Invalid choice" 
+                pause ;;
+        esac
+    done
 }
 
 ###### Swap Management Menu ######
@@ -1596,14 +1684,15 @@ test_cron_execution() {
 swap_management_menu() {
     while true; do
         section_title "Swap Management"
-        echo "1) Auto-configure swap (intelligent detection)"
-        echo "2) Set custom swap size"
-        echo "3) Clean up all swap files and start fresh"
-        echo "4) Show Current Swap Details"
-        echo "0) Back to Main Menu"
+		echo
+        echo "   1) Auto-configure swap (intelligent detection)"
+        echo "   2) Set custom swap size"
+        echo "   3) Clean up all swap files and start fresh"
+        echo "   4) Show Current Swap Details"
+        echo "   0) Back to Main Menu"
         echo
         
-        read -rp "Choose option [1-5]: " choice
+        read -rp "   Choose option [1-5]: " choice
         case $choice in
             1)      local recommended=$(recommended_swap_mb)      [[ $recommended -gt 0 ]] && setup_swap $recommended || log_ok "System has sufficient RAM - no swap recommended"
                 pause
@@ -1642,12 +1731,12 @@ configure_timezone() {
     )
     
     for i in "${!timezones[@]}"; do
-        echo "$((i+1))) ${timezones[$i]}"
+        echo "   $((i+1))) ${timezones[$i]}"
     done
-    echo "0) Cancel"
+    echo "   0) Cancel"
     echo
     
-    read -rp "Choose option [1-8]: " tz_choice
+    read -rp "   Choose option [1-8]: " tz_choice
     case $tz_choice in
         [1-6]) local new_tz="${timezones[$((tz_choice-1))]}" ;;
         7) read -rp "Enter timezone: " new_tz; [[ -z "$new_tz" ]] && { log_warn "No timezone entered"; return; } ;;
@@ -1665,16 +1754,17 @@ configure_timezone() {
 #######################################
 install_packages() {
     section_title "Package Installation"
-    echo -e "${BOLD}Select packages to install:${RESET}"
-    echo "1) Essential tools (curl, wget, nano, htop, vnstat)"
-    echo "2) Development tools (git, unzip, screen)"
-    echo "3) Network tools (speedtest-cli, traceroute, ethtool, net-tools)"
-    echo "4) All recommended packages"
-    echo "5) Custom selection"
-    echo "0) Cancel"
+	echo
+    # echo -e "${BOLD}Select packages to install:${RESET}"
+    echo "   1) Essential tools (curl, wget, nano, htop, vnstat)"
+    echo "   2) Development tools (git, unzip, screen)"
+    echo "   3) Network tools (speedtest-cli, traceroute, ethtool, net-tools)"
+    echo "   4) All recommended packages"
+    echo "   5) Custom selection"
+    echo "   0) Cancel"
     echo
     
-    read -rp "Choose option [1-6]: " pkg_choice
+    read -rp "   Choose option [1-6]: " pkg_choice
     case $pkg_choice in
         1) local packages=("curl" "wget" "nano" "htop" "vnstat") ;;
         2) local packages=("git" "unzip" "screen") ;;
@@ -1712,7 +1802,7 @@ quick_setup() {
     echo -e "${YELLOW}Note: This is recommended for new servers${RESET}"
     echo
     
-    read -rp "Proceed with quick setup? (y/N): " confirm
+    read -rp "   Proceed with quick setup? (y/N): " confirm
     [[ $confirm =~ ^[Yy]$ ]] || { log_warn "Quick setup cancelled"; return; }
     
     # Swap configuration
@@ -1750,17 +1840,21 @@ quick_setup() {
 #######################################
 main_menu() {
     while true; do
-        section_title "🏠 MAIN MENU"
-        echo -e "1) ${CYAN}System Swap Management${RESET}"
-        echo -e "2) ${GREEN}Timezone Configuration${RESET}" 
-        echo -e "3) ${YELLOW}Install Essential Software${RESET}"
-        echo -e "4) ${BLUE}Network Diagnostics & Optimization${RESET}"
-        echo -e "5) ${ORANGE}Quick Setup${RESET} (Recommended for new servers)"
-		echo -e "6) ${PURPLE}System Logs Optimization${RESET}"
-        echo -e "0) ${RED}Exit${RESET}"
+		banner
+		display_system_status
+		echo
+		echo -e "${BOLD}${MAGENTA}🏠 MAIN MENU${RESET}"
+		echo
+        echo -e "   1) ${CYAN}System Swap Management${RESET}"
+        echo -e "   2) ${GREEN}Timezone Configuration${RESET}" 
+        echo -e "   3) ${YELLOW}Install Essential Software${RESET}"
+        echo -e "   4) ${BLUE}Network Diagnostics & Optimization${RESET}"
+        echo -e "   5) ${ORANGE}Quick Setup${RESET} (Recommended for new servers)"
+		echo -e "   6) ${PURPLE}System Logs Optimization${RESET}"
+        echo -e "   0) ${RED}Exit${RESET}"
         echo
         
-        read -rp "Choose option [1-6]: " choice
+        read -rp "   Choose option [1-6]: " choice
         case $choice in
             1) swap_management_menu ;;
             2) configure_timezone ;;
