@@ -8,7 +8,7 @@
 # - Software installation (multi-select)
 # - Comprehensive network optimization
 
-VERSION="TESTv2.4.0"
+VERSION="v2.4.0"
 set -euo pipefail
 
 ###### Colors and Styles ######
