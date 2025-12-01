@@ -32,6 +32,8 @@ readonly RESET='\033[0m'
 readonly SWAPFILE="/swapfile"
 readonly MIN_SAFE_RAM_MB=100
 readonly DEFAULT_TIMEZONE="Asia/Shanghai"
+# readonly BASE_PACKAGES=("curl" "wget" "nano" "htop" "vnstat" "git" "unzip" "screen" "speedtest-cli" "traceroute" "ethtool")
+# readonly NETWORK_PACKAGES=("speedtest-cli" "traceroute" "ethtool" "net-tools" "dnsutils" "iptables-persistent")
 readonly BASE_PACKAGES=("curl" "wget" "nano" "htop" "vnstat" "git" "unzip" "screen" "speedtest-cli" "traceroute" "ethtool")
 readonly NETWORK_PACKAGES=("speedtest-cli" "traceroute" "ethtool" "net-tools" "dnsutils" "iptables-persistent")
 LOG_DIR="/root/server-setup-logs/"
@@ -1162,9 +1164,85 @@ remove_log_optimization() {
 
 configure_timezone() {
     section_title "Timezone Configuration"
+
+    local current_tz
+    current_tz=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "Unknown")
+    echo
+	echo -e "   Current timezone: ${CYAN}${current_tz}${RESET}"
+	
+    # echo -e "   ${YELLOW}Cloud billing reset times:${RESET} Linode (${CYAN}UTC${RESET}), DigitalOcean (${CYAN}UTC${RESET}), LightNode (${CYAN}Asia/Shanghai${RESET})"
+	
+	# echo -e "${YELLOW}Cloud billing reset times:${RESET}\n\
+				# ${CYAN}UTC${RESET} → Linode, DigitalOcean\n\
+				# ${CYAN}Asia/Shanghai${RESET} → LightNode"
+	
+	echo -e "   ${YELLOW}Cloud billing reset times:${RESET}"
+	printf "${CYAN}%-20s${RESET} ${MAGENTA}%-10s${RESET}\n" \
+                "   UTC" "→ DigitalOcean, UpCloud"
+	printf "${CYAN}%-20s${RESET} ${MAGENTA}%-10s${RESET}\n" \
+                "   Asia/Karachi" "→ Linode"
+	printf "${CYAN}%-20s${RESET} ${MAGENTA}%-10s${RESET}\n" \
+                "   Asia/Shanghai" "→ LightNode"
+	printf "${CYAN}%-20s${RESET} ${MAGENTA}%-10s${RESET}\n" \
+                "   Location" "→ UltraHost"
+	
+	# echo -e "${YELLOW}Cloud billing reset times:${RESET}\n\
+				# Linode (${CYAN}UTC${RESET}),\n\
+				# DigitalOcean (${CYAN}UTC${RESET}),\n\
+				# LightNode (${CYAN}Asia/Shanghai${RESET})"
+	echo
+    echo "   1) UTC"
+    echo "   2) Asia/Shanghai"
+    echo "   3) Asia/Tokyo"
+    echo "   4) Asia/Singapore"
+    echo "   5) Asia/Karachi"
+    echo "   6) America/New_York"
+    echo "   7) Custom input"
+    echo "   0) Cancel"
+    echo
+
+    read -rp "   Choose option [0-7]: " tz_choice
+
+    case "$tz_choice" in
+        1) new_tz="UTC" ;;
+        2) new_tz="Asia/Shanghai" ;;
+        3) new_tz="Asia/Tokyo" ;;
+        4) new_tz="Asia/Singapore" ;;
+        5) new_tz="Asia/Karachi" ;;
+        6) new_tz="America/New_York" ;;
+        7) read -rp "Enter custom timezone (e.g., Europe/Berlin): " new_tz
+            if [[ -z "$new_tz" ]]; then
+                log_warn "No timezone entered. Cancelled."
+                return
+            fi ;;
+        0) log_warn "Timezone change cancelled."
+            return ;;
+        *) log_warn "Invalid choice."
+            return ;;
+    esac
+
+    # Apply timezone
+    if timedatectl set-timezone "$new_tz" 2>/dev/null; then
+        log_ok "Timezone successfully set to: ${CYAN}$(timedatectl show --property=Timezone --value)${RESET}"
+    else
+        log_error "Failed to set timezone: $new_tz"
+    fi
+
+    pause
+}
+
+
+configure_timezone_1() {
+    section_title "Timezone Configuration"
     local current_tz=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "Unknown")
     echo -e "Current timezone: ${CYAN}${current_tz}${RESET}"
     echo -e "${BOLD}Available timezones:${RESET}"
+	echo
+	echo -e "${YELLOW}Note: To match cloud billing reset times:${RESET}"
+	echo -e "   • Linode → Use ${CYAN}UTC${RESET}"
+	echo -e "   • DigitalOcean → Use ${CYAN}UTC${RESET}"
+	echo -e "   • LightNode → Use ${CYAN}Asia/Shanghai${RESET}"
+	echo
     
     local timezones=(
         "Asia/Shanghai" "Asia/Tokyo" "Asia/Singapore" 
